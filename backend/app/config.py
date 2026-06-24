@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     
     # OpenRouter
     OPENROUTER_API_KEY: str = ""
-    LLM_MODEL: str = "openai/gpt-4o" # default model, configurable
+    LLM_MODEL: str = "meta-llama/llama-3.2-3b-instruct:free" # free model, configurable
     
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = ["*"]
