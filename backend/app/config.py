@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     ANOMALY_CONFIDENCE_THRESHOLD: float = 0.5
     COOLDOWN_SECONDS: int = 300 # Wait 5 minutes before alerting on same metric
 
+    # Built-in synthetic traffic generator (for live demo on hosted deployments)
+    ENABLE_SYNTHETIC: bool = True
+    SYNTHETIC_DELAY: float = 2.0
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
 settings = Settings()

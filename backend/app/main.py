@@ -13,7 +13,19 @@ from app.database import engine, Base
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Start built-in synthetic traffic generator for live demo
+    synthetic_task = None
+    if settings.ENABLE_SYNTHETIC:
+        from app.ingestion.synthetic_runner import run_synthetic_traffic
+        synthetic_task = asyncio.create_task(
+            run_synthetic_traffic(delay=settings.SYNTHETIC_DELAY)
+        )
+
     yield
+
+    if synthetic_task:
+        synthetic_task.cancel()
     await engine.dispose()
 
 app = FastAPI(
