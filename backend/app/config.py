@@ -13,9 +13,12 @@ class Settings(BaseSettings):
     KAFKA_TOPIC_METRICS: str = "metrics.raw"
     KAFKA_CONSUMER_GROUP: str = "anomaly-detector-group"
     
-    # OpenRouter
+    # LLM provider — Groq (free, fast) or OpenRouter.
+    # If GROQ_API_KEY is set, Groq is used automatically.
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
     OPENROUTER_API_KEY: str = ""
-    LLM_MODEL: str = "meta-llama/llama-3.2-3b-instruct:free" # free model, configurable
+    LLM_MODEL: str = "meta-llama/llama-3.2-3b-instruct:free" # OpenRouter free model, configurable
     
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = ["*"]
