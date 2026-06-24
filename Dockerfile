@@ -23,4 +23,5 @@ COPY --chown=user --from=frontend-build /app/frontend/dist ./frontend/dist
 
 EXPOSE 7860
 
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+WORKDIR /app/backend
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]

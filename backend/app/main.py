@@ -32,6 +32,6 @@ app.add_middleware(
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 # Serve React frontend — must come after API routes
-static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "dist")
 if os.path.isdir(static_dir):
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
