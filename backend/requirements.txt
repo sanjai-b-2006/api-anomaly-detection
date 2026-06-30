@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 sqlalchemy[asyncio]
 aiosqlite
+asyncpg
 pydantic-settings
 httpx
 python-multipart
