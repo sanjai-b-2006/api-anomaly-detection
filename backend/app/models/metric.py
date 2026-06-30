@@ -9,17 +9,18 @@ class MetricDataPoint(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     timestamp = Column(DateTime(timezone=True), index=True, nullable=False)
 
-    # Network Flow features from CIC-IDS-2017
-    destination_port = Column(Integer, nullable=False)
-    flow_duration = Column(Float, nullable=False)
-    total_fwd_packets = Column(Integer, nullable=False)
-    total_bwd_packets = Column(Integer, nullable=False)
-    fwd_packets_s = Column(Float, nullable=False)
-    bwd_packets_s = Column(Float, nullable=False)
-    flow_bytes_s = Column(Float, nullable=False)
-    packet_length_mean = Column(Float, nullable=False)
+    # Web / API traffic metrics (per endpoint, per time window)
+    endpoint = Column(String(255), nullable=False, index=True)
+    method = Column(String(10), default="GET")
+    requests_per_sec = Column(Float, nullable=False)
+    avg_latency_ms = Column(Float, nullable=False)
+    p95_latency_ms = Column(Float, nullable=False)
+    error_rate = Column(Float, nullable=False)
+    total_requests = Column(Integer, nullable=False)
+    error_count = Column(Integer, nullable=False)
+    bytes_per_sec = Column(Float, nullable=False)
 
-    label = Column(String(100), default="BENIGN", index=True)
+    label = Column(String(100), default="NORMAL", index=True)
 
     tags = Column(JSON, default=dict)
     source = Column(String(100), default="mock")

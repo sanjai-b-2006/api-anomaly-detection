@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Real-time Data Anomaly Detector"
+    PROJECT_NAME: str = "Real-time API Traffic Anomaly Detector"
     API_V1_STR: str = "/api/v1"
     
     # Database
