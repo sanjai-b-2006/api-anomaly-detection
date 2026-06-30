@@ -1,22 +1,42 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
-import { Activity, AlertTriangle, ShieldCheck, Gauge, ServerCrash, Terminal, Globe } from 'lucide-react';
+import { Activity, AlertTriangle, ShieldCheck, Gauge, ServerCrash, Globe } from 'lucide-react';
 import './index.css';
 
 export default function App() {
   const [metrics, setMetrics] = useState([]);
   const [anomalies, setAnomalies] = useState([]);
   const [activeTab, setActiveTab] = useState('requests_per_sec');
+  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' | 'incidents'
   const [wsStatus, setWsStatus] = useState('Connecting...');
   const [recentFlows, setRecentFlows] = useState([]);
   const ws = useRef(null);
 
   useEffect(() => {
     connectWebSocket();
+    fetchAnomalies();
     return () => {
       if (ws.current) ws.current.close();
     };
   }, []);
+
+  // Pull historical incidents from the REST API and merge with live ones (dedupe by id)
+  const fetchAnomalies = async () => {
+    try {
+      const res = await fetch('/api/v1/anomalies?limit=50');
+      if (!res.ok) return;
+      const data = await res.json();
+      setAnomalies(prev => {
+        const byId = new Map();
+        [...prev, ...data].forEach(a => byId.set(a.id, a));
+        return Array.from(byId.values())
+          .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+          .slice(0, 50);
+      });
+    } catch (e) {
+      // API not reachable yet — live WebSocket feed still works
+    }
+  };
 
   const connectWebSocket = () => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -124,6 +144,53 @@ export default function App() {
     }
   };
 
+  // Reusable incident card
+  const IncidentCard = ({ anomaly, showTime }) => (
+    <div className={`glass-card alert-card ${anomaly.severity}`}>
+      <div className="alert-header">
+        <span className="alert-metric" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--accent-coral)' }}>
+          <AlertTriangle size={18} />
+          {anomaly.anomaly_type}
+        </span>
+        <span className={`badge badge-${anomaly.severity}`}>{anomaly.severity}</span>
+      </div>
+
+      <div className="flex-col gap-1" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+        {showTime && <div>Time: <code>{new Date(anomaly.timestamp).toLocaleString()}</code></div>}
+        <div>Endpoint: <code>{anomaly.context?.method} {anomaly.context?.endpoint}</code></div>
+        <div>Requests/s: <code>{anomaly.context?.requests_per_sec?.toLocaleString()}</code></div>
+        <div>P95 Latency: <code>{anomaly.context?.p95_latency_ms?.toLocaleString()} ms</code></div>
+        <div>Error Rate: <code>{((anomaly.context?.error_rate || 0) * 100).toFixed(1)}%</code></div>
+      </div>
+
+      <div className="alert-explanation">
+        <strong style={{ color: 'var(--accent-cyan)' }}>SRE Root Cause & Mitigations:</strong>
+        <p style={{ marginTop: '0.5rem', whiteSpace: 'pre-line', fontSize: '0.85rem' }}>
+          {anomaly.llm_explanation || "Generating root cause analysis..."}
+        </p>
+      </div>
+
+      <div style={{ marginTop: '1.25rem', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
+        <span>Confidence: {(anomaly.confidence * 100).toFixed(0)}%</span>
+        <span>Detectors: {anomaly.detectors_triggered?.length || 0} active</span>
+      </div>
+    </div>
+  );
+
+  const navItem = (view, Icon, label) => (
+    <div
+      className="flex items-center gap-2"
+      onClick={() => { setActiveView(view); if (view === 'incidents') fetchAnomalies(); }}
+      style={{
+        color: activeView === view ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+        fontWeight: activeView === view ? 600 : 400,
+        cursor: 'pointer'
+      }}
+    >
+      <Icon size={20} /> {label}
+    </div>
+  );
+
   return (
     <div className="app-container">
       {/* Sidebar */}
@@ -134,15 +201,8 @@ export default function App() {
         </div>
 
         <nav className="flex-col gap-4" style={{ marginTop: '2rem' }}>
-          <div className="flex items-center gap-2" style={{ color: 'var(--accent-cyan)', fontWeight: 600, cursor: 'pointer' }}>
-            <Activity size={20} /> Traffic Dashboard
-          </div>
-          <div className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', cursor: 'pointer' }}>
-            <ServerCrash size={20} /> Incident Feed
-          </div>
-          <div className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', cursor: 'pointer' }}>
-            <Terminal size={20} /> Ops Shell
-          </div>
+          {navItem('dashboard', Activity, 'Traffic Dashboard')}
+          {navItem('incidents', ServerCrash, 'Incident Feed')}
         </nav>
 
         <div style={{ marginTop: 'auto', position: 'absolute', bottom: '2rem' }}>
@@ -164,7 +224,11 @@ export default function App() {
               <Gauge size={28} color="var(--accent-success)" />
               API Traffic Observability Console
             </h1>
-            <h2>Real-time Latency, Throughput & Error-rate Anomaly Tracking</h2>
+            <h2>
+              {activeView === 'dashboard'
+                ? 'Real-time Latency, Throughput & Error-rate Anomaly Tracking'
+                : 'Incident History — every detected anomaly with root-cause analysis'}
+            </h2>
           </div>
 
           <div className="flex gap-4">
@@ -183,182 +247,186 @@ export default function App() {
           </div>
         </header>
 
-        {/* Metric Tabs */}
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-          {['requests_per_sec', 'avg_latency_ms', 'p95_latency_ms', 'error_rate'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className="badge"
-              style={{
-                background: activeTab === tab ? getTabColor(tab) : 'var(--bg-tertiary)',
-                color: activeTab === tab ? '#0b0f19' : 'var(--text-secondary)',
-                border: activeTab === tab ? '1px solid currentColor' : '1px solid var(--border-color)',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                padding: '0.5rem 1rem',
-                fontSize: '0.8rem'
-              }}
-            >
-              {getTabShort(tab)}
-            </button>
-          ))}
-        </div>
-
-        {/* Real-time Line Chart */}
-        <div className="glass-card">
-          <div className="flex justify-between items-center" style={{ marginBottom: '1rem' }}>
-            <h3>{getTabLabel(activeTab)}</h3>
-            <span className="badge badge-low" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-              <Activity size={12} /> Streaming live
-            </span>
-          </div>
-
-          <div className="chart-container">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={metrics}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis
-                  dataKey="time"
-                  stroke="var(--text-secondary)"
-                  tick={{ fill: 'var(--text-secondary)', fontSize: 11 }}
-                  tickLine={false}
-                />
-                <YAxis
-                  stroke="var(--text-secondary)"
-                  tick={{ fill: 'var(--text-secondary)', fontSize: 11 }}
-                  tickLine={false}
-                  axisLine={false}
-                  domain={['auto', 'auto']}
-                />
-                <Tooltip
-                  contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
-                  itemStyle={{ color: 'var(--text-primary)' }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey={activeTab}
-                  stroke={getTabColor(activeTab)}
-                  strokeWidth={2.5}
-                  dot={(props) => {
-                    if (props.payload.isAnomaly) {
-                      return <circle cx={props.cx} cy={props.cy} r={5} fill="var(--accent-coral)" stroke="var(--bg-primary)" strokeWidth={2} />;
-                    }
-                    return <circle cx={props.cx} cy={props.cy} r={0} />;
+        {activeView === 'dashboard' ? (
+          <>
+            {/* Metric Tabs */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              {['requests_per_sec', 'avg_latency_ms', 'p95_latency_ms', 'error_rate'].map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className="badge"
+                  style={{
+                    background: activeTab === tab ? getTabColor(tab) : 'var(--bg-tertiary)',
+                    color: activeTab === tab ? '#0b0f19' : 'var(--text-secondary)',
+                    border: activeTab === tab ? '1px solid currentColor' : '1px solid var(--border-color)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.8rem'
                   }}
-                  activeDot={{ r: 6, fill: getTabColor(activeTab) }}
-                />
-                {metrics.map((entry, index) => (
-                  entry.isAnomaly ?
-                    <ReferenceArea key={index} x1={index > 0 ? metrics[index - 1].time : entry.time} x2={entry.time} fill="rgba(255, 107, 107, 0.08)" />
-                    : null
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+                >
+                  {getTabShort(tab)}
+                </button>
+              ))}
+            </div>
 
-        {/* Incident Feed */}
-        <h3 style={{ marginTop: '2.5rem', marginBottom: '1rem' }}>Active Incident Alerts</h3>
-
-        {anomalies.length === 0 ? (
-          <div className="glass-card flex-col items-center" style={{ padding: '3rem', color: 'var(--text-secondary)' }}>
-            <ShieldCheck size={48} color="var(--accent-success)" style={{ marginBottom: '1rem' }} />
-            <p>All endpoints healthy. Latency, throughput and error rates within SLO.</p>
-          </div>
-        ) : (
-          <div className="alerts-grid">
-            {anomalies.map(anomaly => (
-              <div key={anomaly.id} className={`glass-card alert-card ${anomaly.severity}`}>
-                <div className="alert-header">
-                  <span className="alert-metric" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--accent-coral)' }}>
-                    <AlertTriangle size={18} />
-                    {anomaly.anomaly_type}
-                  </span>
-                  <span className={`badge badge-${anomaly.severity}`}>{anomaly.severity}</span>
-                </div>
-
-                <div className="flex-col gap-1" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                  <div>Endpoint: <code>{anomaly.context?.method} {anomaly.context?.endpoint}</code></div>
-                  <div>Requests/s: <code>{anomaly.context?.requests_per_sec?.toLocaleString()}</code></div>
-                  <div>P95 Latency: <code>{anomaly.context?.p95_latency_ms?.toLocaleString()} ms</code></div>
-                  <div>Error Rate: <code>{((anomaly.context?.error_rate || 0) * 100).toFixed(1)}%</code></div>
-                </div>
-
-                <div className="alert-explanation">
-                  <strong style={{ color: 'var(--accent-cyan)' }}>SRE Root Cause & Mitigations:</strong>
-                  <p style={{ marginTop: '0.5rem', whiteSpace: 'pre-line', fontSize: '0.85rem' }}>
-                    {anomaly.llm_explanation || "Generating root cause analysis..."}
-                  </p>
-                </div>
-
-                <div style={{ marginTop: '1.25rem', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Confidence: {(anomaly.confidence * 100).toFixed(0)}%</span>
-                  <span>Detectors: {anomaly.detectors_triggered?.length || 0} active</span>
-                </div>
+            {/* Real-time Line Chart */}
+            <div className="glass-card">
+              <div className="flex justify-between items-center" style={{ marginBottom: '1rem' }}>
+                <h3>{getTabLabel(activeTab)}</h3>
+                <span className="badge badge-low" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <Activity size={12} /> Streaming live
+                </span>
               </div>
-            ))}
-          </div>
-        )}
 
-        {/* Live Traffic Logs */}
-        <h3 style={{ marginTop: '2.5rem', marginBottom: '1rem' }}>Live API Traffic Logs</h3>
-        <div className="glass-card" style={{ padding: '0.5rem 1rem', overflowX: 'auto', maxHeight: '300px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', color: 'var(--text-primary)', textAlign: 'left' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
-                <th style={{ padding: '0.75rem' }}>Timestamp</th>
-                <th style={{ padding: '0.75rem' }}>Endpoint</th>
-                <th style={{ padding: '0.75rem' }}>Req/s</th>
-                <th style={{ padding: '0.75rem' }}>Avg (ms)</th>
-                <th style={{ padding: '0.75rem' }}>P95 (ms)</th>
-                <th style={{ padding: '0.75rem' }}>Error %</th>
-                <th style={{ padding: '0.75rem' }}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentFlows.length === 0 ? (
-                <tr>
-                  <td colSpan="7" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                    No traffic logged yet. Start the generator to stream samples.
-                  </td>
-                </tr>
-              ) : (
-                recentFlows.map(flow => (
-                  <tr
-                    key={flow.id}
-                    style={{
-                      borderBottom: '1px solid rgba(255,255,255,0.02)',
-                      backgroundColor: flow.label !== 'NORMAL' ? 'rgba(255, 107, 107, 0.05)' : 'transparent',
-                      color: flow.label !== 'NORMAL' ? 'var(--accent-coral)' : 'var(--text-primary)'
-                    }}
-                  >
-                    <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.time}</td>
-                    <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.method} {flow.endpoint}</td>
-                    <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.requests_per_sec?.toLocaleString(undefined, { maximumFractionDigits: 1 })}</td>
-                    <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.avg_latency_ms?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
-                    <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.p95_latency_ms?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
-                    <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{((flow.error_rate || 0) * 100).toFixed(1)}%</td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <span
-                        className="badge"
+              <div className="chart-container">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={metrics}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                    <XAxis
+                      dataKey="time"
+                      stroke="var(--text-secondary)"
+                      tick={{ fill: 'var(--text-secondary)', fontSize: 11 }}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      stroke="var(--text-secondary)"
+                      tick={{ fill: 'var(--text-secondary)', fontSize: 11 }}
+                      tickLine={false}
+                      axisLine={false}
+                      domain={['auto', 'auto']}
+                    />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
+                      itemStyle={{ color: 'var(--text-primary)' }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey={activeTab}
+                      stroke={getTabColor(activeTab)}
+                      strokeWidth={2.5}
+                      dot={(props) => {
+                        if (props.payload.isAnomaly) {
+                          return <circle cx={props.cx} cy={props.cy} r={5} fill="var(--accent-coral)" stroke="var(--bg-primary)" strokeWidth={2} />;
+                        }
+                        return <circle cx={props.cx} cy={props.cy} r={0} />;
+                      }}
+                      activeDot={{ r: 6, fill: getTabColor(activeTab) }}
+                    />
+                    {metrics.map((entry, index) => (
+                      entry.isAnomaly ?
+                        <ReferenceArea key={index} x1={index > 0 ? metrics[index - 1].time : entry.time} x2={entry.time} fill="rgba(255, 107, 107, 0.08)" />
+                        : null
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Live incident feed (most recent) */}
+            <h3 style={{ marginTop: '2.5rem', marginBottom: '1rem' }}>Active Incident Alerts</h3>
+
+            {anomalies.length === 0 ? (
+              <div className="glass-card flex-col items-center" style={{ padding: '3rem', color: 'var(--text-secondary)' }}>
+                <ShieldCheck size={48} color="var(--accent-success)" style={{ marginBottom: '1rem' }} />
+                <p>All endpoints healthy. Latency, throughput and error rates within SLO.</p>
+              </div>
+            ) : (
+              <div className="alerts-grid">
+                {anomalies.slice(0, 6).map(anomaly => (
+                  <IncidentCard key={anomaly.id} anomaly={anomaly} />
+                ))}
+              </div>
+            )}
+
+            {/* Live Traffic Logs */}
+            <h3 style={{ marginTop: '2.5rem', marginBottom: '1rem' }}>Live API Traffic Logs</h3>
+            <div className="glass-card" style={{ padding: '0.5rem 1rem', overflowX: 'auto', maxHeight: '300px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', color: 'var(--text-primary)', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                    <th style={{ padding: '0.75rem' }}>Timestamp</th>
+                    <th style={{ padding: '0.75rem' }}>Endpoint</th>
+                    <th style={{ padding: '0.75rem' }}>Req/s</th>
+                    <th style={{ padding: '0.75rem' }}>Avg (ms)</th>
+                    <th style={{ padding: '0.75rem' }}>P95 (ms)</th>
+                    <th style={{ padding: '0.75rem' }}>Error %</th>
+                    <th style={{ padding: '0.75rem' }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentFlows.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                        No traffic logged yet. Start the generator to stream samples.
+                      </td>
+                    </tr>
+                  ) : (
+                    recentFlows.map(flow => (
+                      <tr
+                        key={flow.id}
                         style={{
-                          background: flow.label === 'NORMAL' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 107, 107, 0.25)',
-                          color: flow.label === 'NORMAL' ? 'var(--accent-success)' : 'var(--accent-coral)',
-                          border: 'none',
-                          padding: '0.15rem 0.5rem',
-                          fontSize: '0.75rem'
+                          borderBottom: '1px solid rgba(255,255,255,0.02)',
+                          backgroundColor: flow.label !== 'NORMAL' ? 'rgba(255, 107, 107, 0.05)' : 'transparent',
+                          color: flow.label !== 'NORMAL' ? 'var(--accent-coral)' : 'var(--text-primary)'
                         }}
                       >
-                        {flow.label}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.time}</td>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.method} {flow.endpoint}</td>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.requests_per_sec?.toLocaleString(undefined, { maximumFractionDigits: 1 })}</td>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.avg_latency_ms?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{flow.p95_latency_ms?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{((flow.error_rate || 0) * 100).toFixed(1)}%</td>
+                        <td style={{ padding: '0.75rem' }}>
+                          <span
+                            className="badge"
+                            style={{
+                              background: flow.label === 'NORMAL' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 107, 107, 0.25)',
+                              color: flow.label === 'NORMAL' ? 'var(--accent-success)' : 'var(--accent-coral)',
+                              border: 'none',
+                              padding: '0.15rem 0.5rem',
+                              fontSize: '0.75rem'
+                            }}
+                          >
+                            {flow.label}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          /* Incident Feed view */
+          <>
+            <div className="flex justify-between items-center" style={{ marginBottom: '1rem' }}>
+              <h3>All Detected Incidents ({anomalies.length})</h3>
+              <button
+                onClick={fetchAnomalies}
+                className="badge"
+                style={{ background: 'var(--bg-tertiary)', color: 'var(--accent-cyan)', border: '1px solid var(--border-color)', cursor: 'pointer', padding: '0.5rem 1rem', fontSize: '0.8rem' }}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {anomalies.length === 0 ? (
+              <div className="glass-card flex-col items-center" style={{ padding: '3rem', color: 'var(--text-secondary)' }}>
+                <ShieldCheck size={48} color="var(--accent-success)" style={{ marginBottom: '1rem' }} />
+                <p>No incidents recorded yet. Detected anomalies will appear here with full history.</p>
+              </div>
+            ) : (
+              <div className="alerts-grid">
+                {anomalies.map(anomaly => (
+                  <IncidentCard key={anomaly.id} anomaly={anomaly} showTime />
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </main>
     </div>
   );
